@@ -26,6 +26,8 @@ constexpr auto MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper";
 constexpr auto HOST_STATE_PATH = "/xyz/openbmc_project/state/host0";
 constexpr auto HOST_STATE_INTERFACE = "xyz.openbmc_project.State.Host";
 constexpr auto HOST_TRANS_PROP = "RequestedHostTransition";
+constexpr auto SMS_SET_ATTENTION = "setAttention";
+constexpr auto SMS_CLEAR_ATTENTION = "clearAttention";
 
 // For throwing exceptions
 using namespace phosphor::logging;
@@ -106,6 +108,7 @@ void Manager::clearQueue()
         // `false` indicating Failure
         std::get<CallBack>(command)(ipmiCmdData, false);
     }
+    this->sendAttention(Attention::Clear);
 }
 
 // Called for alerting the host
@@ -113,13 +116,6 @@ void Manager::checkQueueAndAlertHost()
 {
     if (this->workQueue.size() >= 1)
     {
-        log<level::DEBUG>("Asserting SMS Attention");
-
-        std::string IPMI_PATH("/org/openbmc/HostIpmi/1");
-        std::string IPMI_INTERFACE("org.openbmc.HostIpmi");
-
-        auto host = ::ipmi::getService(this->bus, IPMI_INTERFACE, IPMI_PATH);
-
         // Start the timer for this transaction
         auto time = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::seconds(IPMI_SMS_ATN_ACK_TIMEOUT_SECS));
@@ -130,19 +126,10 @@ void Manager::checkQueueAndAlertHost()
             log<level::ERR>("Error starting timer for control host");
             return;
         }
-
-        auto method =
-            this->bus.new_method_call(host.c_str(), IPMI_PATH.c_str(),
-                                      IPMI_INTERFACE.c_str(), "setAttention");
-        auto reply = this->bus.call(method);
-
-        if (reply.is_method_error())
-        {
-            log<level::ERR>("Error in setting SMS attention");
-            elog<InternalFailure>();
-        }
-        log<level::DEBUG>("SMS Attention asserted");
+        this->sendAttention(Attention::Set);
     }
+    else
+        this->sendAttention(Attention::Clear);
 }
 
 // Called by specific implementations that provide commands
@@ -191,6 +178,27 @@ void Manager::clearQueueOnPowerOn(sdbusplus::message::message& msg)
     }
 }
 
+void Manager::sendAttention(Attention attention)
+{
+    log<level::DEBUG>("Asserting SMS Attention:", entry("ATN=%u", attention));
+
+    std::string IPMI_PATH("/xyz/openbmc_project/Ipmi/Channel/kcs1");
+    std::string IPMI_INTERFACE("xyz.openbmc_project.Ipmi.Channel.SMS");
+
+    auto host = ::ipmi::getService(this->bus, IPMI_INTERFACE, IPMI_PATH);
+    auto atn = attention==Attention::Set ?
+        SMS_SET_ATTENTION : SMS_CLEAR_ATTENTION;
+    auto method =
+            this->bus.new_method_call(host.c_str(), IPMI_PATH.c_str(),
+                                      IPMI_INTERFACE.c_str(), atn);
+    auto reply = this->bus.call(method);
+
+    if (reply.is_method_error())
+    {
+        log<level::ERR>("Error in setting SMS attention, ", entry("ATN=%s", atn));
+        elog<InternalFailure>();
+    }
+}
 } // namespace command
 } // namespace host
 } // namespace phosphor

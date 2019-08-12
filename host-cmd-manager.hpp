@@ -14,6 +14,7 @@ namespace host
 namespace command
 {
 
+enum class Attention:unsigned int {Set, Clear};
 /** @class
  *  @brief Manages commands that are to be sent to Host
  */
@@ -93,6 +94,7 @@ class Manager
      *  @param[in] msg - the sdbusplus message containing the property
      */
     void clearQueueOnPowerOn(sdbusplus::message::message& msg);
+    void sendAttention(Attention);
 
     /** @brief Reference to the dbus handler */
     sdbusplus::bus::bus& bus;
