@@ -1335,6 +1335,57 @@ ipmi::RspType<uint8_t,                // Parameter revision
     return ipmi::responseSuccess(paramRevision, setSelector, configData);
 }
 
+void handleFirmwareVersion(uint8_t paramSelector, std::vector<uint8_t> data){
+    // just handle FW version
+    if (paramSelector != IPMI_SYSINFO_SYSTEM_FW_VERSION)
+    {
+        return;
+    }
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+
+    uint8_t str_len = data[1];
+    auto iter = data.begin();
+    std::string fwVer(iter + 2, iter + str_len + 2);
+
+    ipmi::ObjectTree objectTree =
+        ipmi::getAllDbusObjects(bus, softwareRoot, redundancyIntf);
+
+    for (auto& softObject : objectTree)
+    {
+        auto service = softObject.second.begin()->first;
+        auto objValueTree =
+            ipmi::getManagedObjects(bus, service, softwareRoot);
+
+        for (const auto& objIter : objValueTree)
+        {
+            auto& intfMap = objIter.second;
+            auto& versionProps = intfMap.at(versionIntf);
+            auto& activationProps = intfMap.at(activationIntf);
+            auto purpose =
+                std::get<std::string>(versionProps.at("Purpose"));
+            auto activation =
+                std::get<std::string>(activationProps.at("Activation"));
+            if ((Version::convertVersionPurposeFromString(purpose) ==
+                    Version::VersionPurpose::Host) &&
+                (Activation::convertActivationsFromString(activation) ==
+                    Activation::Activations::Active))
+            {
+                ipmi::setDbusProperty(bus, service, objIter.first,
+                                        versionIntf, "Version",
+                                        std::string(fwVer));
+                std::ofstream myfile(
+                    "/usr/share/phosphor-bmc-code-mgmt/bios-release",
+                    std::ofstream::out);
+                std::string version = std::string("VERSION_ID=") +
+                                        "\"" + std::string(fwVer) + "\"";
+                myfile << version << std::endl;
+                myfile.close();
+                return;
+            }
+        }
+    }
+}
+
 ipmi::RspType<> ipmiAppSetSystemInfo(uint8_t paramSelector, uint8_t data1,
                                      std::vector<uint8_t> configData)
 {
@@ -1380,6 +1431,8 @@ ipmi::RspType<> ipmiAppSetSystemInfo(uint8_t paramSelector, uint8_t data1,
         // parameter does not exist. Init new
         paramString = "";
     }
+
+    handleFirmwareVersion(paramSelector, configData);
 
     uint8_t setSelector = data1;
     size_t count = 0;
