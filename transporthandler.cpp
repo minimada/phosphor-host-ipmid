@@ -164,6 +164,20 @@ enum class LanParam : uint8_t
     CiphersuiteEntries = 23,
 };
 
+// SOL Configuration Parameters
+enum class SolParam : uint8_t
+{
+    INPROGRESS = 0,
+    SOLENABLE = 1,
+    AUTHSUPPORT = 2,
+    ACCU_SEND = 3,
+    RETRY = 4,
+    NON_VOLATILE_BITRATE = 5,
+    VOLATILE_BITRATE = 6,
+    PAYLOAD_CHANNEL = 7, //Read-only
+    PAYLOAD_PORT_NUM = 8, //Read-only
+};
+
 static constexpr uint8_t oemCmdStart = 192;
 static constexpr uint8_t oemCmdEnd = 255;
 
@@ -1464,6 +1478,78 @@ RspType<message::Payload> getLan(uint4_t channelBits, uint3_t, bool revOnly,
     return response(ccParamNotSupported);
 }
 
+RspType<message::Payload> getSol(uint4_t channelBits, uint3_t, bool revOnly,
+                                 uint8_t parameter, uint8_t set, uint8_t block)
+{
+    message::Payload ret;
+    constexpr uint8_t current_revision = 0x11;
+    ret.pack(current_revision);
+
+    if (revOnly)
+    {
+        return responseSuccess(std::move(ret));
+    }
+
+    auto channel = static_cast<uint8_t>(channelBits);
+    if (!doesDeviceExist(channel))
+    {
+        return responseInvalidFieldRequest();
+    }
+
+    switch (static_cast<SolParam>(parameter))
+    {
+        case SolParam::INPROGRESS:
+        {
+            ret.pack(static_cast<uint8_t>(SetStatus::Complete));
+            return responseSuccess(std::move(ret));
+        }
+        case SolParam::SOLENABLE:
+        {
+            ret.pack(static_cast<uint8_t>(0x01));
+            return responseSuccess(std::move(ret));
+        }
+        case SolParam::AUTHSUPPORT:
+        {
+            ret.pack(static_cast<uint8_t>(0x03));
+            return responseSuccess(std::move(ret));
+        }
+        case SolParam::ACCU_SEND:
+        {
+            ret.pack(static_cast<uint8_t>(0x00));
+            ret.pack(static_cast<uint8_t>(0x00));
+            return responseSuccess(std::move(ret));
+        }
+        case SolParam::RETRY:
+        {
+            ret.pack(static_cast<uint8_t>(0x00));
+            ret.pack(static_cast<uint8_t>(0x00));
+            return responseSuccess(std::move(ret));
+        }
+        case SolParam::NON_VOLATILE_BITRATE:
+        {
+            ret.pack(static_cast<uint8_t>(0x09));
+            return responseSuccess(std::move(ret));
+        }
+        case SolParam::VOLATILE_BITRATE:
+        {
+            ret.pack(static_cast<uint8_t>(0x09));
+            return responseSuccess(std::move(ret));
+        }
+        case SolParam::PAYLOAD_CHANNEL:
+        {
+            ret.pack(static_cast<uint8_t>(0x01));
+            return responseSuccess(std::move(ret));
+        }
+        case SolParam::PAYLOAD_PORT_NUM:
+        {
+            ret.pack(static_cast<uint8_t>(0x00));
+            ret.pack(static_cast<uint8_t>(0x00));
+            return responseSuccess(std::move(ret));
+        }
+    }
+    return response(ccParamNotSupported);
+}
+
 } // namespace transport
 } // namespace ipmi
 
@@ -1477,4 +1563,7 @@ void register_netfn_transport_functions()
     ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnTransport,
                           ipmi::transport::cmdGetLanConfigParameters,
                           ipmi::Privilege::Admin, ipmi::transport::getLan);
+    ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnTransport,
+                          ipmi::transport::cmdGetSolConfigParameters,
+                          ipmi::Privilege::Admin, ipmi::transport::getSol);
 }
