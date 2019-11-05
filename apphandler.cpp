@@ -50,6 +50,7 @@ static constexpr auto versionIntf = "xyz.openbmc_project.Software.Version";
 static constexpr auto activationIntf =
     "xyz.openbmc_project.Software.Activation";
 static constexpr auto softwareRoot = "/xyz/openbmc_project/software";
+static constexpr auto hostIntf = "xyz.openbmc_project.Software.HostVer";
 
 void register_netfn_app_functions() __attribute__((constructor));
 
@@ -1343,47 +1344,45 @@ void handleFirmwareVersion(uint8_t paramSelector, std::vector<uint8_t> data){
     }
     sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
 
+    // read host version
     uint8_t str_len = data[1];
     auto iter = data.begin();
     std::string fwVer(iter + 2, iter + str_len + 2);
+    log<level::INFO>(("ipmid get BIOS version:" + fwVer).c_str(),
+            entry("VERSION=%s", fwVer.c_str()));
 
-    ipmi::ObjectTree objectTree =
-        ipmi::getAllDbusObjects(bus, softwareRoot, redundancyIntf);
-
-    for (auto& softObject : objectTree)
+    // update host version to software manager
+    std::string service;
+    try
     {
-        auto service = softObject.second.begin()->first;
-        auto objValueTree =
-            ipmi::getManagedObjects(bus, service, softwareRoot);
-
-        for (const auto& objIter : objValueTree)
-        {
-            auto& intfMap = objIter.second;
-            auto& versionProps = intfMap.at(versionIntf);
-            auto& activationProps = intfMap.at(activationIntf);
-            auto purpose =
-                std::get<std::string>(versionProps.at("Purpose"));
-            auto activation =
-                std::get<std::string>(activationProps.at("Activation"));
-            if ((Version::convertVersionPurposeFromString(purpose) ==
-                    Version::VersionPurpose::Host) &&
-                (Activation::convertActivationsFromString(activation) ==
-                    Activation::Activations::Active))
-            {
-                ipmi::setDbusProperty(bus, service, objIter.first,
-                                        versionIntf, "Version",
-                                        std::string(fwVer));
-                std::ofstream myfile(
-                    "/usr/share/phosphor-bmc-code-mgmt/bios-release",
-                    std::ofstream::out);
-                std::string version = std::string("VERSION_ID=") +
-                                        "\"" + std::string(fwVer) + "\"";
-                myfile << version << std::endl;
-                myfile.close();
-                return;
-            }
-        }
+        service = ipmi::getService(bus, hostIntf, softwareRoot);
+        auto busMethod = bus.new_method_call(service.c_str(), softwareRoot,
+                                            hostIntf, "UpdateHostVer");
+        busMethod.append(fwVer.c_str());
+        bus.call_noreply(busMethod);
     }
+    catch (const std::runtime_error& e)
+    {
+        log<level::ERR>("Cannot get service for update version",
+                         entry("ERROR=%s", e.what()),
+                         entry("INTERFACE=%s", hostIntf));
+    }
+    catch (sdbusplus::exception::SdBusError& e)
+    {
+        log<level::ERR>("sdbusplus exception - Unable to update BIOS version",
+                        entry("ERROR=%s", e.what()),
+                        entry("INTERFACE=%s", hostIntf),
+                        entry("SERVICE=%s", service.c_str()));
+    }
+    // write version file to storage
+    log<level::DEBUG>("write BIOS version file.");
+    std::ofstream myfile(
+        "/usr/share/phosphor-bmc-code-mgmt/bios-release",
+        std::ofstream::out);
+    std::string version = std::string("VERSION_ID=") +
+                            "\"" + std::string(fwVer) + "\"";
+    myfile << version << std::endl;
+    myfile.close();
 }
 
 ipmi::RspType<> ipmiAppSetSystemInfo(uint8_t paramSelector, uint8_t data1,
