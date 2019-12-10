@@ -39,6 +39,114 @@ static constexpr auto lastEntry = 0xFFFF;
 static constexpr auto entireRecord = 0xFF;
 static constexpr auto selRecordSize = 16;
 
+#ifdef JOURNAL_SEL
+// ID string generated using journalctl to include in the MESSAGE_ID field for
+// SEL entries.  Helps with filtering SEL entries in the journal.
+static constexpr const char* selMessageId = "b370836ccf2f4850ac5bee185b77893a";
+static constexpr uint8_t selOperationSupport = 0x02;
+static constexpr uint8_t systemEvent = 0x02;
+static constexpr size_t systemEventSize = 3;
+static constexpr uint8_t oemTsEventFirst = 0xC0;
+static constexpr uint8_t oemTsEventLast = 0xDF;
+static constexpr size_t oemTsEventSize = 9;
+static constexpr uint8_t oemEventFirst = 0xE0;
+static constexpr uint8_t oemEventLast = 0xFF;
+static constexpr size_t oemEventSize = 13;
+static constexpr uint8_t eventMsgRev = 0x04;
+static constexpr auto operationSupport = 0x0A;
+
+constexpr static const uint8_t deassertionEvent = 0x80;
+
+/** @struct GetSELInfoResponse
+ *
+ *  IPMI payload for Get SEL Info command response.
+ */
+struct GetSELInfoResponse
+{
+    uint8_t selVersion;       //!< SEL revision.
+    uint16_t entries;         //!< Number of log entries in SEL.
+    uint16_t freeSpace;       //!< Free Space in bytes.
+    uint32_t addTimeStamp;    //!< Most recent addition timestamp.
+    uint32_t eraseTimeStamp;  //!< Most recent erase timestamp.
+    uint8_t operationSupport; //!< Operation support.
+} __attribute__((packed));
+
+/** @struct GetSELEntryResponseOEMTimestamped
+ *
+ *  IPMI payload for Get SEL Entry command response for OEM Timestamped types.
+ */
+struct GetSELEntryResponseOEMTimestamped
+{
+    uint16_t nextRecordID;
+    uint16_t recordID;
+    uint8_t recordType;
+    uint32_t timestamp;
+    uint8_t eventData[ipmi::sel::oemTsEventSize];
+} __attribute__((packed));
+
+/** @struct GetSELEntryResponseOEM
+ *
+ *  IPMI payload for Get SEL Entry command response for OEM types.
+ */
+struct GetSELEntryResponseOEM
+{
+    uint16_t nextRecordID;
+    uint16_t recordID;
+    uint8_t recordType;
+    uint8_t eventData[ipmi::sel::oemEventSize];
+} __attribute__((packed));
+
+/** @struct AddSELEntryRequest
+ *
+ *  IPMI payload for Add SEL Entry command request.
+ */
+struct AddSELEntryRequest
+{
+    uint16_t recordID;
+    uint8_t recordType;
+    uint32_t timestamp;
+    uint16_t generatorID;
+    uint8_t eventMsgRevision;
+    uint8_t sensorType;
+    uint8_t sensorNum;
+    uint8_t eventType;
+    uint8_t eventData[ipmi::sel::systemEventSize];
+} __attribute__((packed));
+
+/** @struct AddSELEntryRequestOEMTimestamped
+ *
+ *  IPMI payload for Add SEL Entry command request for OEM Timestamped types.
+ */
+struct AddSELEntryRequestOEMTimestamped
+{
+    uint16_t recordID;
+    uint8_t recordType;
+    uint32_t timestamp;
+    uint8_t eventData[ipmi::sel::oemTsEventSize];
+} __attribute__((packed));
+
+/** @struct AddSELEntryRequestOEM
+ *
+ *  IPMI payload for Add SEL Entry command request for OEM types.
+ */
+struct AddSELEntryRequestOEM
+{
+    uint16_t recordID;
+    uint8_t recordType;
+    uint8_t eventData[ipmi::sel::oemEventSize];
+} __attribute__((packed));
+
+/** @struct DeleteSELEntryRequest
+ *
+ *  IPMI payload for Delete SEL Entry command request.
+ */
+struct DeleteSELEntryRequest
+{
+    uint16_t reservationID; //!< Reservation ID.
+    uint16_t selRecordID;   //!< SEL Record ID.
+} __attribute__((packed));
+
+#else  // JOURNAL_SEL
 namespace operationSupport
 {
 static constexpr bool overflow = false;
@@ -47,6 +155,7 @@ static constexpr bool partialAddSelEntry = false;
 static constexpr bool reserveSel = true;
 static constexpr bool getSelAllocationInfo = false;
 } // namespace operationSupport
+#endif // JOURNAL_SEL
 
 /** @struct GetSELEntryRequest
  *
