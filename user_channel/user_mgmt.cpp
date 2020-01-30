@@ -471,43 +471,8 @@ UserAccess::UserAccess() : bus(ipmid_get_sd_bus_connection())
     userMutex = std::make_unique<boost::interprocess::named_recursive_mutex>(
         boost::interprocess::open_or_create, ipmiUserMutex);
 
-    initUserDataFile();
+    cacheUserDataFile();
     getSystemPrivAndGroups();
-    sigHndlrLock = boost::interprocess::file_lock(ipmiUserDataFile);
-    // Register it for single object and single process either netipimd /
-    // host-ipmid
-    if (userUpdatedSignal == nullptr && sigHndlrLock.try_lock())
-    {
-        log<level::DEBUG>("Registering signal handler");
-        userUpdatedSignal = std::make_unique<sdbusplus::bus::match_t>(
-            bus,
-            sdbusplus::bus::match::rules::type::signal() +
-                sdbusplus::bus::match::rules::interface(dBusObjManager) +
-                sdbusplus::bus::match::rules::path(userMgrObjBasePath),
-            [&](sdbusplus::message::message& msg) {
-                userUpdatedSignalHandler(*this, msg);
-            });
-        userMgrRenamedSignal = std::make_unique<sdbusplus::bus::match_t>(
-            bus,
-            sdbusplus::bus::match::rules::type::signal() +
-                sdbusplus::bus::match::rules::interface(userMgrInterface) +
-                sdbusplus::bus::match::rules::path(userMgrObjBasePath),
-            [&](sdbusplus::message::message& msg) {
-                userUpdatedSignalHandler(*this, msg);
-            });
-        userPropertiesSignal = std::make_unique<sdbusplus::bus::match_t>(
-            bus,
-            sdbusplus::bus::match::rules::type::signal() +
-                sdbusplus::bus::match::rules::path_namespace(userObjBasePath) +
-                sdbusplus::bus::match::rules::interface(
-                    dBusPropertiesInterface) +
-                sdbusplus::bus::match::rules::member(propertiesChangedSignal) +
-                sdbusplus::bus::match::rules::argN(0, usersInterface),
-            [&](sdbusplus::message::message& msg) {
-                userUpdatedSignalHandler(*this, msg);
-            });
-        signalHndlrObject = true;
-    }
 }
 
 UserInfo* UserAccess::getUserInfo(const uint8_t userId)
@@ -980,6 +945,26 @@ ipmi_ret_t UserAccess::getUserName(const uint8_t userId, std::string& userName)
     return IPMI_CC_OK;
 }
 
+bool UserAccess::isIpmiInAvailableGroupList()
+{
+    if (std::find(availableGroups.begin(), availableGroups.end(),
+                  ipmiGrpName) != availableGroups.end())
+    {
+        return true;
+    }
+    if (availableGroups.empty())
+    {
+        // available groups shouldn't be empty, re-query
+        getSystemPrivAndGroups();
+        if (std::find(availableGroups.begin(), availableGroups.end(),
+                      ipmiGrpName) != availableGroups.end())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 ipmi_ret_t UserAccess::setUserName(const uint8_t userId,
                                    const char* userNameInChar)
 {
@@ -1025,6 +1010,10 @@ ipmi_ret_t UserAccess::setUserName(const uint8_t userId,
     {
         try
         {
+            if (!isIpmiInAvailableGroupList())
+            {
+                return IPMI_CC_UNSPECIFIED_ERROR;
+            }
             // Create new user
             auto method = bus.new_method_call(
                 getUserServiceName().c_str(), userMgrObjBasePath,
@@ -1569,7 +1558,7 @@ int UserAccess::getUserObjProperties(const DbusUserObjValue& userObjs,
     return -EIO;
 }
 
-void UserAccess::initUserDataFile()
+void UserAccess::cacheUserDataFile()
 {
     boost::interprocess::scoped_lock<boost::interprocess::named_recursive_mutex>
         userLock{*userMutex};
@@ -1595,6 +1584,41 @@ void UserAccess::initUserDataFile()
             }
         }
         writeUserData();
+    }
+    sigHndlrLock = boost::interprocess::file_lock(ipmiUserDataFile);
+    // Register it for single object and single process either netipimd /
+    // host-ipmid
+    if (userUpdatedSignal == nullptr && sigHndlrLock.try_lock())
+    {
+        log<level::DEBUG>("Registering signal handler");
+        userUpdatedSignal = std::make_unique<sdbusplus::bus::match_t>(
+            bus,
+            sdbusplus::bus::match::rules::type::signal() +
+                sdbusplus::bus::match::rules::interface(dBusObjManager) +
+                sdbusplus::bus::match::rules::path(userMgrObjBasePath),
+            [&](sdbusplus::message::message& msg) {
+                userUpdatedSignalHandler(*this, msg);
+            });
+        userMgrRenamedSignal = std::make_unique<sdbusplus::bus::match_t>(
+            bus,
+            sdbusplus::bus::match::rules::type::signal() +
+                sdbusplus::bus::match::rules::interface(userMgrInterface) +
+                sdbusplus::bus::match::rules::path(userMgrObjBasePath),
+            [&](sdbusplus::message::message& msg) {
+                userUpdatedSignalHandler(*this, msg);
+            });
+        userPropertiesSignal = std::make_unique<sdbusplus::bus::match_t>(
+            bus,
+            sdbusplus::bus::match::rules::type::signal() +
+                sdbusplus::bus::match::rules::path_namespace(userObjBasePath) +
+                sdbusplus::bus::match::rules::interface(
+                    dBusPropertiesInterface) +
+                sdbusplus::bus::match::rules::member(propertiesChangedSignal) +
+                sdbusplus::bus::match::rules::argN(0, usersInterface),
+            [&](sdbusplus::message::message& msg) {
+                userUpdatedSignalHandler(*this, msg);
+            });
+        signalHndlrObject = true;
     }
     std::map<DbusUserObjPath, DbusUserObjValue> managedObjs;
     try
