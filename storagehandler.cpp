@@ -81,17 +81,6 @@ enum class AccessMode
     words  ///< Device is accessed by words
 };
 
-ipmi_ret_t ipmi_storage_wildcard(ipmi_netfn_t netfn, ipmi_cmd_t cmd,
-                                 ipmi_request_t request,
-                                 ipmi_response_t response,
-                                 ipmi_data_len_t data_len,
-                                 ipmi_context_t context)
-{
-    // Status code.
-    ipmi_ret_t rc = IPMI_CC_INVALID;
-    *data_len = 0;
-    return rc;
-}
 #ifdef JOURNAL_SEL
 namespace ipmi::sel::erase_time
 {
@@ -1354,9 +1343,6 @@ ipmi::RspType<uint8_t,  // SDR version
 
 void register_netfn_storage_functions()
 {
-    // <Wildcard Command>
-    ipmi_register_callback(NETFUN_STORAGE, IPMI_CMD_WILDCARD, NULL,
-                           ipmi_storage_wildcard, PRIVILEGE_USER);
 #ifdef JOURNAL_SEL
     // <Get SEL Info>
     ipmi_register_callback(NETFUN_STORAGE, IPMI_CMD_GET_SEL_INFO, NULL,

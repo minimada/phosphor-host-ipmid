@@ -1415,6 +1415,10 @@ RspType<> setLan(uint4_t channelBits, uint4_t, uint8_t parameter,
         }
         case LanParam::IP:
         {
+            if (channelCall<getDHCPProperty>(channel))
+            {
+                return responseCommandNotAvailable();
+            }
             in_addr ip;
             std::array<uint8_t, sizeof(ip)> bytes;
             if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
@@ -1474,6 +1478,10 @@ RspType<> setLan(uint4_t channelBits, uint4_t, uint8_t parameter,
         }
         case LanParam::SubnetMask:
         {
+            if (channelCall<getDHCPProperty>(channel))
+            {
+                return responseCommandNotAvailable();
+            }
             in_addr netmask;
             std::array<uint8_t, sizeof(netmask)> bytes;
             if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
@@ -1487,6 +1495,10 @@ RspType<> setLan(uint4_t channelBits, uint4_t, uint8_t parameter,
         }
         case LanParam::Gateway1:
         {
+            if (channelCall<getDHCPProperty>(channel))
+            {
+                return responseCommandNotAvailable();
+            }
             in_addr gateway;
             std::array<uint8_t, sizeof(gateway)> bytes;
             if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
