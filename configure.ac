@@ -29,22 +29,18 @@ AC_PROG_MAKE_SET
 AC_ARG_ENABLE([boot-flag-safe-mode-support],
     AS_HELP_STRING([--disable-boot-flag-safe-mode-support], [Disable safe mode option in boot flags. [default=enable]])
 )
-AS_IF([test "x$enable_boot_flag_safe_mode_support" != "xno"],
+AS_IF([test "x$enable_boot_flag_safe_mode_support" == "xyes"],
     AC_MSG_NOTICE([Enabling safe mode option in boot flags])
-    [cpp_flags="-DENABLE_BOOT_FLAG_SAFE_MODE_SUPPORT"]
-    AC_SUBST([CPPFLAGS], [$cpp_flags]),
-    AC_MSG_WARN([Disabling safe mode option in boot flags])
+    AX_APPEND_COMPILE_FLAGS([-DENABLE_BOOT_FLAG_SAFE_MODE_SUPPORT], [CXXFLAGS])
 )
 
 # Add an option to enable/disable i2c master write read command white list checking
 AC_ARG_ENABLE([i2c-whitelist-check],
     AS_HELP_STRING([--disable-i2c-whitelist-check], [Disable I2C master write read command white list check. [default=enable]])
 )
-AS_IF([test "x$enable_i2c_whitelist_check" != "xno"],
+AS_IF([test "x$enable_i2c_whitelist_check" == "xyes"],
     AC_MSG_NOTICE([Enabling I2C master write read command white list check])
-    [cpp_flags="-DENABLE_I2C_WHITELIST_CHECK"]
-    AC_SUBST([CPPFLAGS], [$cpp_flags]),
-    AC_MSG_WARN([Disabling I2C master write read command white list check])
+    AX_APPEND_COMPILE_FLAGS([-DENABLE_I2C_WHITELIST_CHECK], [CXXFLAGS])
 )
 
 # softoff dir specific ones
@@ -60,7 +56,7 @@ AS_IF([test "x$enable_softoff" != "xno"],
 AC_ARG_WITH([journal-sel],
     AS_HELP_STRING([--with-journal-sel], [Builds with journal-based SEL commands instead of D-Bus-based])
 )
-AS_IF([test "x$with_journal_sel" = "xyes"], [
+AS_IF([test "x$with_journal_sel" == "xyes"], [
     AX_APPEND_COMPILE_FLAGS([-DJOURNAL_SEL], [CXXFLAGS])
 ])
 
