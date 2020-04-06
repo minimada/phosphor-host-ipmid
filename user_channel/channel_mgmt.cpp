@@ -134,7 +134,7 @@ static std::array<std::string, 4> accessModeList = {
 static std::array<std::string, 4> sessionSupportList = {
     "session-less", "single-session", "multi-session", "session-based"};
 
-static std::array<std::string, PRIVILEGE_OEM + 1> privList = {
+const std::array<std::string, PRIVILEGE_OEM + 1> privList = {
     "priv-reserved", "priv-callback", "priv-user",
     "priv-operator", "priv-admin",    "priv-oem"};
 
@@ -491,40 +491,38 @@ size_t ChannelConfig::getChannelMaxTransferSize(uint8_t chNum)
     return channelData[chNum].maxTransferSize;
 }
 
-ipmi_ret_t ChannelConfig::getChannelInfo(const uint8_t chNum,
-                                         ChannelInfo& chInfo)
+Cc ChannelConfig::getChannelInfo(const uint8_t chNum, ChannelInfo& chInfo)
 {
     if (!isValidChannel(chNum))
     {
         log<level::DEBUG>("Invalid channel");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     std::copy_n(reinterpret_cast<uint8_t*>(&channelData[chNum].chInfo),
                 sizeof(channelData[chNum].chInfo),
                 reinterpret_cast<uint8_t*>(&chInfo));
-
-    return IPMI_CC_OK;
+    return ccSuccess;
 }
 
-ipmi_ret_t ChannelConfig::getChannelAccessData(const uint8_t chNum,
-                                               ChannelAccess& chAccessData)
+Cc ChannelConfig::getChannelAccessData(const uint8_t chNum,
+                                       ChannelAccess& chAccessData)
 {
     if (!isValidChannel(chNum))
     {
         log<level::DEBUG>("Invalid channel");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     if (getChannelSessionSupport(chNum) == EChannelSessSupported::none)
     {
         log<level::DEBUG>("Session-less channel doesn't have access data.");
-        return IPMI_CC_ACTION_NOT_SUPPORTED_FOR_CHANNEL;
+        return ccActionNotSupportedForChannel;
     }
 
     if (checkAndReloadVolatileData() != 0)
     {
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        return ccUnspecifiedError;
     }
 
     std::copy_n(
@@ -532,24 +530,23 @@ ipmi_ret_t ChannelConfig::getChannelAccessData(const uint8_t chNum,
         sizeof(channelData[chNum].chAccess.chVolatileData),
         reinterpret_cast<uint8_t*>(&chAccessData));
 
-    return IPMI_CC_OK;
+    return ccSuccess;
 }
 
-ipmi_ret_t
-    ChannelConfig::setChannelAccessData(const uint8_t chNum,
-                                        const ChannelAccess& chAccessData,
-                                        const uint8_t setFlag)
+Cc ChannelConfig::setChannelAccessData(const uint8_t chNum,
+                                       const ChannelAccess& chAccessData,
+                                       const uint8_t setFlag)
 {
     if (!isValidChannel(chNum))
     {
         log<level::DEBUG>("Invalid channel");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     if (getChannelSessionSupport(chNum) == EChannelSessSupported::none)
     {
         log<level::DEBUG>("Session-less channel doesn't have access data.");
-        return IPMI_CC_ACTION_NOT_SUPPORTED_FOR_CHANNEL;
+        return ccActionNotSupportedForChannel;
     }
 
     if (((setFlag & setAccessMode) &&
@@ -558,7 +555,7 @@ ipmi_ret_t
          (!isValidPrivLimit(chAccessData.privLimit))))
     {
         log<level::DEBUG>("Invalid access mode / privilege limit specified");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     boost::interprocess::scoped_lock<boost::interprocess::named_recursive_mutex>
@@ -566,7 +563,7 @@ ipmi_ret_t
 
     if (checkAndReloadVolatileData() != 0)
     {
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        return ccUnspecifiedError;
     }
 
     if (setFlag & setAccessMode)
@@ -599,30 +596,29 @@ ipmi_ret_t
     if (writeChannelVolatileData() != 0)
     {
         log<level::DEBUG>("Failed to update the channel volatile data");
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        return ccUnspecifiedError;
     }
-    return IPMI_CC_OK;
+    return ccSuccess;
 }
 
-ipmi_ret_t
-    ChannelConfig::getChannelAccessPersistData(const uint8_t chNum,
-                                               ChannelAccess& chAccessData)
+Cc ChannelConfig::getChannelAccessPersistData(const uint8_t chNum,
+                                              ChannelAccess& chAccessData)
 {
     if (!isValidChannel(chNum))
     {
         log<level::DEBUG>("Invalid channel");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     if (getChannelSessionSupport(chNum) == EChannelSessSupported::none)
     {
         log<level::DEBUG>("Session-less channel doesn't have access data.");
-        return IPMI_CC_ACTION_NOT_SUPPORTED_FOR_CHANNEL;
+        return ccActionNotSupportedForChannel;
     }
 
     if (checkAndReloadNVData() != 0)
     {
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        return ccUnspecifiedError;
     }
 
     std::copy_n(reinterpret_cast<uint8_t*>(
@@ -630,23 +626,23 @@ ipmi_ret_t
                 sizeof(channelData[chNum].chAccess.chNonVolatileData),
                 reinterpret_cast<uint8_t*>(&chAccessData));
 
-    return IPMI_CC_OK;
+    return ccSuccess;
 }
 
-ipmi_ret_t ChannelConfig::setChannelAccessPersistData(
-    const uint8_t chNum, const ChannelAccess& chAccessData,
-    const uint8_t setFlag)
+Cc ChannelConfig::setChannelAccessPersistData(const uint8_t chNum,
+                                              const ChannelAccess& chAccessData,
+                                              const uint8_t setFlag)
 {
     if (!isValidChannel(chNum))
     {
         log<level::DEBUG>("Invalid channel");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     if (getChannelSessionSupport(chNum) == EChannelSessSupported::none)
     {
         log<level::DEBUG>("Session-less channel doesn't have access data.");
-        return IPMI_CC_ACTION_NOT_SUPPORTED_FOR_CHANNEL;
+        return ccActionNotSupportedForChannel;
     }
 
     if (((setFlag & setAccessMode) &&
@@ -655,7 +651,7 @@ ipmi_ret_t ChannelConfig::setChannelAccessPersistData(
          (!isValidPrivLimit(chAccessData.privLimit))))
     {
         log<level::DEBUG>("Invalid access mode / privilege limit specified");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     boost::interprocess::scoped_lock<boost::interprocess::named_recursive_mutex>
@@ -663,7 +659,7 @@ ipmi_ret_t ChannelConfig::setChannelAccessPersistData(
 
     if (checkAndReloadNVData() != 0)
     {
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        return ccUnspecifiedError;
     }
 
     if (setFlag & setAccessMode)
@@ -698,7 +694,29 @@ ipmi_ret_t ChannelConfig::setChannelAccessPersistData(
     }
     if (setFlag & setPrivLimit)
     {
-        signalFlag |= (1 << chNum);
+        // Send Update to network channel config interfaces over dbus
+        std::string privStr = convertToPrivLimitString(chAccessData.privLimit);
+        std::string networkIntfObj = std::string(networkIntfObjectBasePath) +
+                                     "/" + channelData[chNum].chName;
+        try
+        {
+            if (0 != setDbusProperty(networkIntfServiceName, networkIntfObj,
+                                     networkChConfigIntfName,
+                                     privilegePropertyString, privStr))
+            {
+                log<level::DEBUG>(
+                    "Network interface does not exist",
+                    entry("INTERFACE=%s", channelData[chNum].chName.c_str()));
+                return ccUnspecifiedError;
+            }
+        }
+        catch (const sdbusplus::exception::SdBusError& e)
+        {
+            log<level::ERR>("Exception: Network interface does not exist");
+            return ccInvalidFieldRequest;
+        }
+
+		signalFlag |= (1 << chNum);
         channelData[chNum].chAccess.chNonVolatileData.privLimit =
             chAccessData.privLimit;
     }
@@ -707,51 +725,50 @@ ipmi_ret_t ChannelConfig::setChannelAccessPersistData(
     if (writeChannelPersistData() != 0)
     {
         log<level::DEBUG>("Failed to update the presist data file");
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        return ccUnspecifiedError;
     }
-    return IPMI_CC_OK;
+    return ccSuccess;
 }
 
-ipmi_ret_t
-    ChannelConfig::getChannelAuthTypeSupported(const uint8_t chNum,
-                                               uint8_t& authTypeSupported)
+Cc ChannelConfig::getChannelAuthTypeSupported(const uint8_t chNum,
+                                              uint8_t& authTypeSupported)
 {
     if (!isValidChannel(chNum))
     {
         log<level::DEBUG>("Invalid channel");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     authTypeSupported = channelData[chNum].chInfo.authTypeSupported;
-    return IPMI_CC_OK;
+    return ccSuccess;
 }
 
-ipmi_ret_t ChannelConfig::getChannelEnabledAuthType(const uint8_t chNum,
-                                                    const uint8_t priv,
-                                                    EAuthType& authType)
+Cc ChannelConfig::getChannelEnabledAuthType(const uint8_t chNum,
+                                            const uint8_t priv,
+                                            EAuthType& authType)
 {
     if (!isValidChannel(chNum))
     {
         log<level::DEBUG>("Invalid channel");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     if (getChannelSessionSupport(chNum) == EChannelSessSupported::none)
     {
         log<level::DEBUG>("Sessionless channel doesn't have access data.");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     if (!isValidPrivLimit(priv))
     {
         log<level::DEBUG>("Invalid privilege specified.");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ccInvalidFieldRequest;
     }
 
     // TODO: Hardcoded for now. Need to implement.
     authType = EAuthType::none;
 
-    return IPMI_CC_OK;
+    return ccSuccess;
 }
 
 std::time_t ChannelConfig::getUpdatedFileTime(const std::string& fileName)
