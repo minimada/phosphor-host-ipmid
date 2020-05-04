@@ -549,12 +549,15 @@ Cc ChannelConfig::setChannelAccessData(const uint8_t chNum,
         return ccActionNotSupportedForChannel;
     }
 
-    if (((setFlag & setAccessMode) &&
-         (!isValidAccessMode(chAccessData.accessMode))) ||
-        ((setFlag & setPrivLimit) &&
-         (!isValidPrivLimit(chAccessData.privLimit))))
+    if ((setFlag & setAccessMode) &&
+        (!isValidAccessMode(chAccessData.accessMode)))
     {
-        log<level::DEBUG>("Invalid access mode / privilege limit specified");
+        log<level::DEBUG>("Invalid access mode specified");
+        return ccAccessModeNotSupportedForChannel;
+    }
+    if ((setFlag & setPrivLimit) && (!isValidPrivLimit(chAccessData.privLimit)))
+    {
+        log<level::DEBUG>("Invalid privilege limit specified");
         return ccInvalidFieldRequest;
     }
 
@@ -645,12 +648,15 @@ Cc ChannelConfig::setChannelAccessPersistData(const uint8_t chNum,
         return ccActionNotSupportedForChannel;
     }
 
-    if (((setFlag & setAccessMode) &&
-         (!isValidAccessMode(chAccessData.accessMode))) ||
-        ((setFlag & setPrivLimit) &&
-         (!isValidPrivLimit(chAccessData.privLimit))))
+    if ((setFlag & setAccessMode) &&
+        (!isValidAccessMode(chAccessData.accessMode)))
     {
-        log<level::DEBUG>("Invalid access mode / privilege limit specified");
+        log<level::DEBUG>("Invalid access mode specified");
+        return ccAccessModeNotSupportedForChannel;
+    }
+    if ((setFlag & setPrivLimit) && (!isValidPrivLimit(chAccessData.privLimit)))
+    {
+        log<level::DEBUG>("Invalid privilege limit specified");
         return ccInvalidFieldRequest;
     }
 
