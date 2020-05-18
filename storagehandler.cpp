@@ -1230,19 +1230,6 @@ ipmi::RspType<uint16_t // recordID of the Added SEL entry
 }
 #endif // JOURNAL_SEL
 
-bool isFruPresent(const std::string& fruPath)
-{
-    using namespace ipmi::fru;
-
-    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
-
-    auto propValue =
-        ipmi::getDbusProperty(bus, invMgrInterface, invObjPath + fruPath,
-                              invItemInterface, itemPresentProp);
-
-    return std::get<bool>(propValue);
-}
-
 /** @brief implements the get FRU Inventory Area Info command
  *
  *  @returns IPMI completion code plus response data
@@ -1257,12 +1244,6 @@ ipmi::RspType<uint16_t, // FRU Inventory area size in bytes,
 
     auto iter = frus.find(fruID);
     if (iter == frus.end())
-    {
-        return ipmi::responseSensorInvalid();
-    }
-
-    auto path = iter->second[0].path;
-    if (!isFruPresent(path))
     {
         return ipmi::responseSensorInvalid();
     }
