@@ -174,29 +174,40 @@ void Manager::clearQueueOnPowerOn(sdbusplus::message::message& msg)
     if (server::Host::convertTransitionFromString(requestedState) ==
         server::Host::Transition::On)
     {
-        clearQueue();
+        if (!this->workQueue.empty())
+            clearQueue();
     }
 }
 
 void Manager::sendAttention(Attention attention)
 {
+    std::string service;
     log<level::DEBUG>("Asserting SMS Attention:", entry("ATN=%u", attention));
 
     std::string IPMI_PATH("/xyz/openbmc_project/Ipmi/Channel/kcs1");
     std::string IPMI_INTERFACE("xyz.openbmc_project.Ipmi.Channel.SMS");
-
-    auto host = ::ipmi::getService(this->bus, IPMI_INTERFACE, IPMI_PATH);
     auto atn = attention==Attention::Set ?
         SMS_SET_ATTENTION : SMS_CLEAR_ATTENTION;
-    auto method =
-            this->bus.new_method_call(host.c_str(), IPMI_PATH.c_str(),
-                                      IPMI_INTERFACE.c_str(), atn);
-    auto reply = this->bus.call(method);
 
-    if (reply.is_method_error())
+    try
     {
-        log<level::ERR>("Error in setting SMS attention, ", entry("ATN=%s", atn));
-        elog<InternalFailure>();
+        service = ::ipmi::getService(this->bus, IPMI_INTERFACE, IPMI_PATH);
+        auto method =
+            this->bus.new_method_call(service.c_str(), IPMI_PATH.c_str(),
+                    IPMI_INTERFACE.c_str(), atn);
+        auto reply = this->bus.call(method);
+
+        if (reply.is_method_error())
+        {
+            log<level::ERR>("Error in setting SMS attention, ", entry("ATN=%s", atn));
+            elog<InternalFailure>();
+        }
+    }
+    catch (sdbusplus::exception::SdBusError& e)
+    {
+        log<level::ERR>("Unable to set/clear SMS attention",
+                        entry("ERROR=%s", e.what()),
+                        entry("ATN=%s", atn));
     }
 }
 } // namespace command
