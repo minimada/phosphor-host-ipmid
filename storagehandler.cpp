@@ -1090,7 +1090,7 @@ ipmi::RspType<uint16_t> ipmiStorageReserveSel()
 }
 
 #ifdef JOURNAL_SEL
-
+#if 0
 static void toHexStr(const boost::beast::span<uint8_t> bytes,
                      std::string& hexStr)
 {
@@ -1103,16 +1103,14 @@ static void toHexStr(const boost::beast::span<uint8_t> bytes,
     hexStr = stream.str();
 }
 
-
 static inline bool defaultMessageHook(uint16_t recordID, uint8_t recordType,
                        uint32_t timestamp, uint16_t generatorID, uint8_t evmRev,
                        uint8_t sensorType, uint8_t sensorNum, uint8_t eventType,
-                       uint8_t eventData1, uint8_t eventData2,
-                       uint8_t eventData3)
+                       std::array<uint8_t, eventDataSize> eventData)
 {
     // Log the record as a default Redfish message instead of a SEL record
 
- // Save the raw IPMI string of the request
+    // Save the raw IPMI string of the request
     std::string ipmiRaw;
     std::array selBytes = {static_cast<uint8_t>(recordID),
                            static_cast<uint8_t>(recordID >> 8),
@@ -1127,9 +1125,9 @@ static inline bool defaultMessageHook(uint16_t recordID, uint8_t recordType,
                            sensorType,
                            sensorNum,
                            eventType,
-                           eventData1,
-                           eventData2,
-                           eventData3};
+                           eventData[0],
+                           eventData[1],
+                           eventData[2]};
 
     toHexStr(boost::beast::span<uint8_t>(selBytes), ipmiRaw);
 
@@ -1151,27 +1149,84 @@ static inline bool defaultMessageHook(uint16_t recordID, uint8_t recordType,
 
     return true;
 }
+#endif
 
 ipmi::RspType<uint16_t> ipmiStorageAddSEL(
     uint16_t recordID, uint8_t recordType, uint32_t timestamp,
     uint16_t generatorID, uint8_t evmRev, uint8_t sensorType, uint8_t sensorNum,
-    uint8_t eventType, uint8_t eventData1, uint8_t eventData2,
-    uint8_t eventData3)
+    uint8_t eventType, std::array<uint8_t, eventDataSize> eventData)
 {
     // Per the IPMI spec, need to cancel any reservation when a SEL entry is
     // added
     cancelSELReservation();
-
+#if 0
     // Send this request to the Redfish hooks to log it as a Redfish message
     // instead.  There is no need to add it to the SEL, so just return success.
     defaultMessageHook(
         recordID, recordType, timestamp, generatorID, evmRev, sensorType,
-        sensorNum, eventType, eventData1, eventData2, eventData3);
+        sensorNum, eventType, eventData);
+#endif
+    static constexpr char const* ipmiSELObject =
+        "xyz.openbmc_project.Logging.IPMI";
+    static constexpr char const* ipmiSELPath =
+        "/xyz/openbmc_project/Logging/IPMI";
+    static constexpr char const* ipmiSELAddInterface =
+        "xyz.openbmc_project.Logging.IPMI";
+    static const std::string ipmiSELAddMessage =
+        "IPMI SEL entry logged using IPMI Add SEL Entry command.";
 
-    uint16_t responseID = 0xFFFF;
-    return ipmi::responseSuccess(responseID);
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+
+    if (recordType == ipmi::sel::systemEvent)
+    {
+        std::string sensorPath = getPathFromSensorNumber(sensorNum);
+        if(sensorPath.length() == 0){
+            return ipmi::responseSensorInvalid();
+        }
+
+        bool assert =
+            (eventType & ipmi::sel::deassertionEvent) ? false : true;
+        uint16_t genId = generatorID;
+        sdbusplus::message::message writeSEL = bus.new_method_call(
+            ipmiSELObject, ipmiSELPath, ipmiSELAddInterface, "IpmiSelAdd");
+        writeSEL.append(ipmiSELAddMessage, sensorPath, eventData, assert,
+                        genId);
+        try
+        {
+            sdbusplus::message::message writeSELResp = bus.call(writeSEL);
+            writeSELResp.read(recordID);
+        }
+        catch (sdbusplus::exception_t& e)
+        {
+            log<level::ERR>(e.what());
+            return ipmi::responseUnspecifiedError();
+        }
+    }
+    else if (recordType >= ipmi::sel::oemTsEventFirst &&
+             recordType <= ipmi::sel::oemEventLast)
+    {
+        sdbusplus::message::message writeSEL = bus.new_method_call(
+            ipmiSELObject, ipmiSELPath, ipmiSELAddInterface, "IpmiSelAddOem");
+        writeSEL.append(ipmiSELAddMessage, eventData, recordType);
+        try
+        {
+            sdbusplus::message::message writeSELResp = bus.call(writeSEL);
+            writeSELResp.read(recordID);
+        }
+        catch (sdbusplus::exception_t& e)
+        {
+            log<level::ERR>(e.what());
+            return ipmi::responseUnspecifiedError();
+        }
+    }
+    else
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+
+   // uint16_t responseID = 0xFFFF;
+    return ipmi::responseSuccess(recordID);
 }
-
 #else  // JOURNAL_SEL not used
 /** @brief implements the Add SEL entry command
  * @request
