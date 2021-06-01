@@ -17,8 +17,11 @@
 #include "channel_mgmt.hpp"
 
 #include "apphandler.hpp"
+#include "user_layer.hpp"
 
+#include <ifaddrs.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <boost/interprocess/sync/scoped_lock.hpp>
@@ -68,6 +71,7 @@ static constexpr const char* mediumTypeString = "medium_type";
 static constexpr const char* protocolTypeString = "protocol_type";
 static constexpr const char* sessionSupportedString = "session_supported";
 static constexpr const char* isIpmiString = "is_ipmi";
+static constexpr const char* isManagementNIC = "is_management_nic";
 static constexpr const char* authTypeSupportedString = "auth_type_supported";
 static constexpr const char* accessModeString = "access_mode";
 static constexpr const char* userAuthDisabledString = "user_auth_disabled";
@@ -950,12 +954,41 @@ void ChannelConfig::setDefaultChannelConfig(const uint8_t chNum,
     channelData[chNum].chID = chNum;
     channelData[chNum].isChValid = false;
     channelData[chNum].activeSessCount = 0;
+    channelData[chNum].isManagementNIC = false;
 
     channelData[chNum].chInfo.mediumType = defaultMediumType;
     channelData[chNum].chInfo.protocolType = defaultProtocolType;
     channelData[chNum].chInfo.sessionSupported = defaultSessionSupported;
     channelData[chNum].chInfo.isIpmi = defaultIsIpmiState;
     channelData[chNum].chInfo.authTypeSupported = defaultAuthType;
+}
+
+uint8_t ChannelConfig::getManagementNICID()
+{
+    static bool idFound = false;
+    static uint8_t id = 0;
+
+    if (idFound)
+    {
+        return id;
+    }
+
+    for (uint8_t chIdx = 0; chIdx < maxIpmiChannels; chIdx++)
+    {
+        if (channelData[chIdx].isManagementNIC)
+        {
+            id = chIdx;
+            idFound = true;
+            break;
+        }
+    }
+
+    if (!idFound)
+    {
+        id = static_cast<uint8_t>(EChannelID::chanLan1);
+        idFound = true;
+    }
+    return id;
 }
 
 int ChannelConfig::loadChannelConfig()
@@ -971,6 +1004,15 @@ int ChannelConfig::loadChannelConfig()
     }
 
     channelData.fill(ChannelProperties{});
+
+    // Collect the list of NIC interfaces connected to the BMC. Use this
+    // information to only add IPMI channels that have active NIC interfaces.
+    struct ifaddrs *ifaddr, *ifa;
+    if (int err = getifaddrs(&ifaddr); err < 0)
+    {
+        log<level::DEBUG>("Unable to acquire network interfaces");
+        return -EIO;
+    }
 
     for (int chNum = 0; chNum < maxIpmiChannels; chNum++)
     {
@@ -992,16 +1034,39 @@ int ChannelConfig::loadChannelConfig()
             if (jsonChInfo.is_null())
             {
                 log<level::ERR>("Invalid/corrupted channel config file");
+                freeifaddrs(ifaddr);
                 return -EBADMSG;
             }
 
+            bool channelFound = true;
+            // Confirm the LAN channel is present
+            if (jsonChInfo[mediumTypeString].get<std::string>() == "lan-802.3")
+            {
+                channelFound = false;
+                for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
+                {
+                    if (jsonChData[nameString].get<std::string>() ==
+                        ifa->ifa_name)
+                    {
+                        channelFound = true;
+                        break;
+                    }
+                }
+            }
             ChannelProperties& chData = channelData[chNum];
-            chData.chName = jsonChData[nameString].get<std::string>();
             chData.chID = chNum;
-            chData.isChValid = jsonChData[isValidString].get<bool>();
+            chData.chName = jsonChData[nameString].get<std::string>();
+            chData.isChValid =
+                channelFound && jsonChData[isValidString].get<bool>();
             chData.activeSessCount = jsonChData.value(activeSessionsString, 0);
             chData.maxTransferSize =
                 jsonChData.value(maxTransferSizeString, smallChannelSize);
+            if (jsonChData.count(isManagementNIC) != 0)
+            {
+                chData.isManagementNIC =
+                    jsonChData[isManagementNIC].get<bool>();
+            }
+
             std::string medTypeStr =
                 jsonChInfo[mediumTypeString].get<std::string>();
             chData.chInfo.mediumType =
@@ -1021,14 +1086,18 @@ int ChannelConfig::loadChannelConfig()
         {
             log<level::DEBUG>("Json Exception caught.",
                               entry("MSG=%s", e.what()));
+            freeifaddrs(ifaddr);
+
             return -EBADMSG;
         }
         catch (const std::invalid_argument& e)
         {
             log<level::ERR>("Corrupted config.", entry("MSG=%s", e.what()));
+            freeifaddrs(ifaddr);
             return -EBADMSG;
         }
     }
+    freeifaddrs(ifaddr);
 
     return 0;
 }

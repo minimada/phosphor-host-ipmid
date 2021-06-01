@@ -31,7 +31,9 @@ AC_ARG_ENABLE([boot-flag-safe-mode-support],
 )
 AS_IF([test "x$enable_boot_flag_safe_mode_support" == "xyes"],
     AC_MSG_NOTICE([Enabling safe mode option in boot flags])
-    AX_APPEND_COMPILE_FLAGS([-DENABLE_BOOT_FLAG_SAFE_MODE_SUPPORT], [CXXFLAGS])
+    [cpp_flags="$cpp_flags -DENABLE_BOOT_FLAG_SAFE_MODE_SUPPORT"]
+    AC_SUBST([CPPFLAGS], [$cpp_flags]),
+    AC_MSG_WARN([Disabling safe mode option in boot flags])
 )
 
 # Add an option to enable/disable i2c master write read command white list checking
@@ -40,7 +42,9 @@ AC_ARG_ENABLE([i2c-whitelist-check],
 )
 AS_IF([test "x$enable_i2c_whitelist_check" == "xyes"],
     AC_MSG_NOTICE([Enabling I2C master write read command white list check])
-    AX_APPEND_COMPILE_FLAGS([-DENABLE_I2C_WHITELIST_CHECK], [CXXFLAGS])
+    [cpp_flags="$cpp_flags -DENABLE_I2C_WHITELIST_CHECK"]
+    AC_SUBST([CPPFLAGS], [$cpp_flags]),
+    AC_MSG_WARN([Disabling I2C master write read command white list check])
 )
 
 # softoff dir specific ones
@@ -170,7 +174,7 @@ AS_IF([test "x$enable_softoff" != "xno"],
     # Timeouts in SECONDS for SoftPowerOff protocol
     [AC_ARG_VAR(IPMI_SMS_ATN_ACK_TIMEOUT_SECS, \
          [Initial timeout for host to ack and query SMS_ATN from BMC])]
-    [AC_DEFINE_UNQUOTED([IPMI_SMS_ATN_ACK_TIMEOUT_SECS], [30], \
+    [AC_DEFINE_UNQUOTED([IPMI_SMS_ATN_ACK_TIMEOUT_SECS], [3], \
                         [Timeout for host to ack and query SMS_ATN from BMC])]
 
     [AC_ARG_VAR(IPMI_HOST_SHUTDOWN_COMPLETE_TIMEOUT_SECS, [Wait time for host to shutdown])]
@@ -269,6 +273,25 @@ AC_ARG_ENABLE([ipmi-whitelist],
       esac],[ipmi_whitelist=true]
       )
 AM_CONDITIONAL([FEATURE_IPMI_WHITELIST], [test x$ipmi_whitelist = xtrue])
+
+# Dynamic sensors stack write permission is disabled by default; offer a way to enable it
+# Change to true if you wish to allow external IPMI users to modify your sensor
+# values, and you are OK with the security implications of doing so.
+AC_ARG_ENABLE([dynamic_sensors_write],
+    [ --enable-dynamic_sensors_write   Enable/disable Dynamic Sensors writes],
+    [case "${enableval}" in
+      yes) dynamic_sensors_write=true ;;
+      no) dynamic_sensors_write=false ;;
+      *) AC_MSG_ERROR([bad value ${enableval} for --enable-dynamic_sensors_write]) ;;
+      esac],[dynamic_sensors_write=false]
+      )
+
+AS_IF([test x$dynamic_sensors_write = xtrue],
+    AC_MSG_NOTICE([Enabling dynamic sensors write feature])
+    [cpp_flags="$cpp_flags -DFEATURE_DYNAMIC_SENSORS_WRITE"]
+    AC_SUBST([CPPFLAGS], [$cpp_flags]),
+    AC_MSG_WARN([Disabling dynamic sensors write feature])
+)
 
 # Dynamic sensors stack is enabled by default; offer a way to disable it
 AC_ARG_ENABLE([dynamic_sensors],

@@ -30,6 +30,7 @@
 #include <xyz/openbmc_project/Common/error.hpp>
 #include <xyz/openbmc_project/Control/Boot/Mode/server.hpp>
 #include <xyz/openbmc_project/Control/Boot/Source/server.hpp>
+#include <xyz/openbmc_project/Control/Boot/Type/server.hpp>
 #include <xyz/openbmc_project/Control/Power/RestorePolicy/server.hpp>
 #include <xyz/openbmc_project/State/Host/server.hpp>
 #include <xyz/openbmc_project/State/PowerOnHours/server.hpp>
@@ -39,9 +40,6 @@ std::unique_ptr<phosphor::Timer> identifyTimer
 
 static ChassisIDState chassisIDState = ChassisIDState::reserved;
 static constexpr uint8_t setParmVersion = 0x01;
-static constexpr uint8_t setParmBootFlagsPermanent = 0x40;
-static constexpr uint8_t setParmBootFlagsValidOneTime = 0x80;
-static constexpr uint8_t setParmBootFlagsValidPermanent = 0xC0;
 
 constexpr size_t sizeVersion = 2;
 constexpr size_t DEFAULT_IDENTIFY_TIME_OUT = 15;
@@ -58,9 +56,6 @@ static constexpr size_t addrSizeOffset = 8;
 static constexpr size_t macOffset = 9;
 static constexpr size_t addrTypeOffset = 16;
 static constexpr size_t ipAddrOffset = 17;
-
-static constexpr uint4_t RESERVED = 0;
-static constexpr uint8_t CHANNEL_NOT_SUPPORTED = 0;
 
 static constexpr size_t encIdentifyObjectsSize = 1;
 static constexpr size_t chassisIdentifyReqLength = 2;
@@ -95,7 +90,7 @@ constexpr auto MAC_INTERFACE = "xyz.openbmc_project.Network.MACAddress";
 static constexpr auto chassisStateRoot = "/xyz/openbmc_project/state";
 static constexpr auto chassisPOHStateIntf =
     "xyz.openbmc_project.State.PowerOnHours";
-static constexpr auto pOHCounterProperty = "POHCounter";
+static constexpr auto pohCounterProperty = "POHCounter";
 static constexpr auto match = "chassis0";
 const static constexpr char chassisCapIntf[] =
     "xyz.openbmc_project.Control.ChassisCapabilities";
@@ -136,6 +131,7 @@ namespace internal
 {
 
 constexpr auto bootModeIntf = "xyz.openbmc_project.Control.Boot.Mode";
+constexpr auto bootTypeIntf = "xyz.openbmc_project.Control.Boot.Type";
 constexpr auto bootSourceIntf = "xyz.openbmc_project.Control.Boot.Source";
 constexpr auto powerRestoreIntf =
     "xyz.openbmc_project.Control.Power.RestorePolicy";
@@ -151,8 +147,8 @@ settings::Objects& getObjects()
     if (objectsPtr == nullptr)
     {
         objectsPtr = std::make_unique<settings::Objects>(
-            dbus, std::vector<std::string>{bootModeIntf, bootSourceIntf,
-                                           powerRestoreIntf});
+            dbus, std::vector<std::string>{bootModeIntf, bootTypeIntf,
+                                           bootSourceIntf, powerRestoreIntf});
     }
     return *objectsPtr;
 }
@@ -572,7 +568,7 @@ uint32_t getPOHCounter()
 
     auto propValue =
         ipmi::getDbusProperty(bus, service, chassisStateObj.first,
-                              chassisPOHStateIntf, pOHCounterProperty);
+                              chassisPOHStateIntf, pohCounterProperty);
 
     return std::get<uint32_t>(propValue);
 }
@@ -1166,7 +1162,7 @@ ipmi::RspType<bool,    // Power is on
     constexpr bool coolingFanFault = false;
     // chassisIdentifySupport set because this command is implemented
     constexpr bool chassisIdentifySupport = true;
-    uint2_t chassisIdentifyState = static_cast<uint2_t>(chassisIDState);
+    uint2_t chassisIdentifyState = types::enum_cast<uint2_t>(chassisIDState);
     constexpr bool diagButtonDisabled = false;
     constexpr bool sleepButtonDisabled = false;
     constexpr bool diagButtonDisableAllow = false;
@@ -1271,7 +1267,8 @@ static std::optional<uint4_t> getRestartCause(ipmi::Context::ptr ctx)
         {
             auto cause =
                 State::Host::convertRestartCauseFromString(restartCauseStr);
-            return restartCauseToIpmiRestartCause(cause);
+            return types::enum_cast<uint4_t>(
+                restartCauseToIpmiRestartCause(cause));
         }
     }
 
@@ -1294,8 +1291,9 @@ ipmi::RspType<uint4_t, // Restart Cause
         return ipmi::responseUnspecifiedError();
     }
 
-    return ipmi::responseSuccess(cause.value(), RESERVED,
-                                 CHANNEL_NOT_SUPPORTED);
+    constexpr uint4_t reserved = 0;
+    auto channel = static_cast<uint8_t>(ctx->channel);
+    return ipmi::responseSuccess(cause.value(), reserved, channel);
 }
 
 //-------------------------------------------------------------
@@ -1588,6 +1586,9 @@ using namespace sdbusplus::xyz::openbmc_project::Control::Boot::server;
 using IpmiValue = uint8_t;
 constexpr auto ipmiDefault = 0;
 
+std::map<IpmiValue, Type::Types> typeIpmiToDbus = {{0x00, Type::Types::Legacy},
+                                                   {0x01, Type::Types::EFI}};
+
 std::map<IpmiValue, Source::Sources> sourceIpmiToDbus = {
     {0x01, Source::Sources::Network},
     {0x02, Source::Sources::Disk},
@@ -1601,6 +1602,9 @@ std::map<IpmiValue, Mode::Modes> modeIpmiToDbus = {
 #endif // ENABLE_BOOT_SAFE_MODE_SUPPORT
     {0x06, Mode::Modes::Setup},
     {ipmiDefault, Mode::Modes::Regular}};
+
+std::map<Type::Types, IpmiValue> typeDbusToIpmi = {{Type::Types::Legacy, 0x00},
+                                                   {Type::Types::EFI, 0x01}};
 
 std::map<Source::Sources, IpmiValue> sourceDbusToIpmi = {
     {Source::Sources::Network, 0x01},
@@ -1619,52 +1623,86 @@ std::map<Mode::Modes, IpmiValue> modeDbusToIpmi = {
 } // namespace boot_options
 
 /** @brief Set the property value for boot source
+ *  @param[in] ctx - context pointer
  *  @param[in] source - boot source value
  *  @return On failure return IPMI error.
  */
-static ipmi_ret_t setBootSource(const Source::Sources& source)
+static ipmi_ret_t setBootSource(ipmi::Context::ptr& ctx,
+                                const Source::Sources& source)
 {
     using namespace chassis::internal;
     using namespace chassis::internal::cache;
-    std::variant<std::string> property = convertForMessage(source);
     settings::Objects& objects = getObjects();
     auto bootSetting = settings::boot::setting(objects, bootSourceIntf);
     const auto& bootSourceSetting = std::get<settings::Path>(bootSetting);
-    auto method = dbus.new_method_call(
-        objects.service(bootSourceSetting, bootSourceIntf).c_str(),
-        bootSourceSetting.c_str(), ipmi::PROP_INTF, "Set");
-    method.append(bootSourceIntf, "BootSource", property);
-    auto reply = dbus.call(method);
-    if (reply.is_method_error())
+    boost::system::error_code ec = ipmi::setDbusProperty(
+        ctx, objects.service(bootSourceSetting, bootSourceIntf),
+        bootSourceSetting, bootSourceIntf, "BootSource",
+        convertForMessage(source));
+    if (ec)
     {
-        log<level::ERR>("Error in BootSource Set");
-        report<InternalFailure>();
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        log<level::ERR>("Error in BootSource Set",
+                        entry("ERROR=%s", ec.message().c_str()));
+        return ipmi::ccUnspecifiedError;
     }
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 /** @brief Set the property value for boot mode
+ *  @param[in] ctx - context pointer
  *  @param[in] mode - boot mode value
  *  @return On failure return IPMI error.
  */
-static ipmi::Cc setBootMode(const Mode::Modes& mode)
+static ipmi::Cc setBootMode(ipmi::Context::ptr& ctx, const Mode::Modes& mode)
 {
     using namespace chassis::internal;
     using namespace chassis::internal::cache;
-    std::variant<std::string> property = convertForMessage(mode);
     settings::Objects& objects = getObjects();
     auto bootSetting = settings::boot::setting(objects, bootModeIntf);
     const auto& bootModeSetting = std::get<settings::Path>(bootSetting);
-    auto method = dbus.new_method_call(
-        objects.service(bootModeSetting, bootModeIntf).c_str(),
-        bootModeSetting.c_str(), ipmi::PROP_INTF, "Set");
-    method.append(bootModeIntf, "BootMode", property);
-    auto reply = dbus.call(method);
-    if (reply.is_method_error())
+    boost::system::error_code ec = ipmi::setDbusProperty(
+        ctx, objects.service(bootModeSetting, bootModeIntf), bootModeSetting,
+        bootModeIntf, "BootMode", convertForMessage(mode));
+    if (ec)
     {
-        log<level::ERR>("Error in BootMode Set");
-        report<InternalFailure>();
+        log<level::ERR>("Error in BootMode Set",
+                        entry("ERROR=%s", ec.message().c_str()));
+        return ipmi::ccUnspecifiedError;
+    }
+    return ipmi::ccSuccess;
+}
+
+/** @brief Set the property value for boot type
+ *  @param[in] ctx - context pointer
+ *  @param[in] type - boot type value
+ *  @return On failure return IPMI error.
+ */
+static ipmi::Cc setBootType(ipmi::Context::ptr& ctx, const Type::Types& type)
+{
+    using namespace chassis::internal;
+    using namespace chassis::internal::cache;
+    settings::Objects& objects = getObjects();
+    std::tuple<settings::Path, settings::boot::OneTimeEnabled> bootSetting;
+    try
+    {
+        bootSetting = settings::boot::setting(objects, bootTypeIntf);
+    }
+    catch (const std::exception& e)
+    {
+        // Return immediately if BootType interface is not present.
+        // This interface is not relevant for some Host architectures
+        // (for example POWER). In this case we don't won't IPMI to
+        // return an error, but want to just skip this function.
+        return ipmi::ccSuccess;
+    }
+    const auto& bootTypeSetting = std::get<settings::Path>(bootSetting);
+    boost::system::error_code ec = ipmi::setDbusProperty(
+        ctx, objects.service(bootTypeSetting, bootTypeIntf), bootTypeSetting,
+        bootTypeIntf, "BootType", convertForMessage(type));
+    if (ec)
+    {
+        log<level::ERR>("Error in BootType Set",
+                        entry("ERROR=%s", ec.message().c_str()));
         return ipmi::ccUnspecifiedError;
     }
     return ipmi::ccSuccess;
@@ -1675,6 +1713,7 @@ static constexpr uint8_t setInProgress = 0x1;
 static uint8_t transferStatus = setComplete;
 
 /** @brief implements the Get Chassis system boot option
+ *  @param ctx - context pointer
  *  @param bootOptionParameter   - boot option parameter selector
  *  @param reserved1    - reserved bit
  *  @param setSelector  - selects a particular block or set of parameters
@@ -1692,7 +1731,8 @@ static uint8_t transferStatus = setComplete;
  *   data          - configuration parameter data
  */
 ipmi::RspType<ipmi::message::Payload>
-    ipmiChassisGetSysBootOptions(uint7_t bootOptionParameter, bool reserved1,
+    ipmiChassisGetSysBootOptions(ipmi::Context::ptr ctx,
+                                 uint7_t bootOptionParameter, bool reserved1,
 
                                  uint8_t setSelector, uint8_t blockSelector)
 {
@@ -1708,15 +1748,15 @@ ipmi::RspType<ipmi::message::Payload>
 
     IpmiValue bootOption = ipmiDefault;
 
-    if (static_cast<uint8_t>(bootOptionParameter) ==
-        static_cast<uint8_t>(BootOptionParameter::setInProgress))
+    if (types::enum_cast<BootOptionParameter>(bootOptionParameter) ==
+        BootOptionParameter::setInProgress)
     {
         response.pack(bootOptionParameter, reserved1, transferStatus);
         return ipmi::responseSuccess(std::move(response));
     }
 
-    if (static_cast<uint8_t>(bootOptionParameter) ==
-        static_cast<uint8_t>(BootOptionParameter::bootInfo))
+    if (types::enum_cast<BootOptionParameter>(bootOptionParameter) ==
+        BootOptionParameter::bootInfo)
     {
         constexpr uint8_t writeMask = 0;
         constexpr uint8_t bootInfoAck = 0;
@@ -1728,54 +1768,80 @@ ipmi::RspType<ipmi::message::Payload>
      * Parameter #5 means boot flags. Please refer to 28.13 of ipmi doc.
      * This is the only parameter used by petitboot.
      */
-    if (static_cast<uint8_t>(bootOptionParameter) ==
-        static_cast<uint8_t>(BootOptionParameter::bootFlags))
+    if (types::enum_cast<BootOptionParameter>(bootOptionParameter) ==
+        BootOptionParameter::bootFlags)
     {
         using namespace chassis::internal;
         using namespace chassis::internal::cache;
 
         try
         {
+            std::string result;
+            boost::system::error_code ec;
             settings::Objects& objects = getObjects();
+
             auto bootSetting = settings::boot::setting(objects, bootSourceIntf);
             const auto& bootSourceSetting =
                 std::get<settings::Path>(bootSetting);
-            auto oneTimeEnabled =
-                std::get<settings::boot::OneTimeEnabled>(bootSetting);
-            auto method = dbus.new_method_call(
-                objects.service(bootSourceSetting, bootSourceIntf).c_str(),
-                bootSourceSetting.c_str(), ipmi::PROP_INTF, "Get");
-            method.append(bootSourceIntf, "BootSource");
-            auto reply = dbus.call(method);
-            if (reply.is_method_error())
+            ec = ipmi::getDbusProperty(
+                ctx, objects.service(bootSourceSetting, bootSourceIntf),
+                bootSourceSetting, bootSourceIntf, "BootSource", result);
+            if (ec)
             {
                 log<level::ERR>(
                     "ipmiChassisGetSysBootOptions: Error in BootSource Get");
                 report<InternalFailure>();
                 return ipmi::responseUnspecifiedError();
             }
-            std::variant<std::string> result;
-            reply.read(result);
-            auto bootSource =
-                Source::convertSourcesFromString(std::get<std::string>(result));
+            auto bootSource = Source::convertSourcesFromString(result);
+
+            Type::Types bootType;
+            bool bootTypeIntfPresent = true;
+            try
+            {
+                bootSetting = settings::boot::setting(objects, bootTypeIntf);
+            }
+            catch (const std::exception& e)
+            {
+                bootTypeIntfPresent = false;
+            }
+            if (bootTypeIntfPresent)
+            {
+                const auto& bootTypeSetting =
+                    std::get<settings::Path>(bootSetting);
+                ec = ipmi::getDbusProperty(
+                    ctx, objects.service(bootTypeSetting, bootTypeIntf),
+                    bootTypeSetting, bootTypeIntf, "BootType", result);
+                if (ec)
+                {
+                    log<level::ERR>(
+                        "ipmiChassisGetSysBootOptions: Error in BootType Get");
+                    report<InternalFailure>();
+                    return ipmi::responseUnspecifiedError();
+                }
+                else
+                {
+                    bootType = Type::convertTypesFromString(result);
+                }
+            }
+            else
+            {
+                bootType = Type::Types::EFI;
+            }
 
             bootSetting = settings::boot::setting(objects, bootModeIntf);
             const auto& bootModeSetting = std::get<settings::Path>(bootSetting);
-            method = dbus.new_method_call(
-                objects.service(bootModeSetting, bootModeIntf).c_str(),
-                bootModeSetting.c_str(), ipmi::PROP_INTF, "Get");
-            method.append(bootModeIntf, "BootMode");
-            reply = dbus.call(method);
-            if (reply.is_method_error())
+            ec = ipmi::getDbusProperty(
+                ctx, objects.service(bootModeSetting, bootModeIntf),
+                bootModeSetting, bootModeIntf, "BootMode", result);
+            if (ec)
             {
                 log<level::ERR>(
                     "ipmiChassisGetSysBootOptions: Error in BootMode Get");
                 report<InternalFailure>();
                 return ipmi::responseUnspecifiedError();
             }
-            reply.read(result);
-            auto bootMode =
-                Mode::convertModesFromString(std::get<std::string>(result));
+            auto bootMode = Mode::convertModesFromString(result);
 
             bootOption = sourceDbusToIpmi.at(bootSource);
             if ((Mode::Modes::Regular == bootMode) &&
@@ -1788,12 +1854,16 @@ ipmi::RspType<ipmi::message::Payload>
                 bootOption = modeDbusToIpmi.at(bootMode);
             }
 
-            uint8_t bootOptionParam = oneTimeEnabled
-                                          ? setParmBootFlagsValidOneTime
-                                          : setParmBootFlagsValidPermanent;
-            response.pack(bootOptionParameter, reserved1, bootOptionParam,
-                          uint2_t{}, uint4_t{bootOption}, uint2_t{}, uint8_t{},
-                          uint8_t{}, uint8_t{});
+            IpmiValue biosBootType = typeDbusToIpmi.at(bootType);
+            auto oneTimeEnabled =
+                std::get<settings::boot::OneTimeEnabled>(bootSetting);
+            uint1_t permanent = oneTimeEnabled ? 0 : 1;
+            uint1_t validFlag = 1;
+
+            response.pack(bootOptionParameter, reserved1, uint5_t{},
+                          uint1_t{biosBootType}, uint1_t{permanent},
+                          uint1_t{validFlag}, uint2_t{}, uint4_t{bootOption},
+                          uint2_t{}, uint8_t{}, uint8_t{}, uint8_t{});
             return ipmi::responseSuccess(std::move(response));
         }
         catch (InternalFailure& e)
@@ -1808,8 +1878,8 @@ ipmi::RspType<ipmi::message::Payload>
         if ((bootOptionParameter >= oemParmStart) &&
             (bootOptionParameter <= oemParmEnd))
         {
-            if (static_cast<uint8_t>(bootOptionParameter) ==
-                static_cast<uint8_t>(BootOptionParameter::opalNetworkSettings))
+            if (types::enum_cast<BootOptionParameter>(bootOptionParameter) ==
+                BootOptionParameter::opalNetworkSettings)
             {
                 response.pack(bootOptionParameter, reserved1);
                 int ret = getHostNetworkData(response);
@@ -1845,8 +1915,8 @@ ipmi::RspType<> ipmiChassisSetSysBootOptions(ipmi::Context::ptr ctx,
     using namespace boot_options;
     ipmi::Cc rc;
 
-    if (parameterSelector ==
-        static_cast<uint7_t>(BootOptionParameter::setInProgress))
+    if (types::enum_cast<BootOptionParameter>(parameterSelector) ==
+        BootOptionParameter::setInProgress)
     {
         uint2_t setInProgressFlag;
         uint6_t rsvd;
@@ -1872,8 +1942,8 @@ ipmi::RspType<> ipmiChassisSetSysBootOptions(ipmi::Context::ptr ctx,
      * This is the only parameter used by petitboot.
      */
 
-    if (parameterSelector ==
-        static_cast<uint7_t>(BootOptionParameter::bootFlags))
+    if (types::enum_cast<BootOptionParameter>(parameterSelector) ==
+        BootOptionParameter::bootFlags)
     {
         uint5_t rsvd;
         bool validFlag;
@@ -1939,15 +2009,15 @@ ipmi::RspType<> ipmiChassisSetSysBootOptions(ipmi::Context::ptr ctx,
 
             auto modeItr =
                 modeIpmiToDbus.find(static_cast<uint8_t>(bootDeviceSelector));
+            auto typeItr =
+                typeIpmiToDbus.find(static_cast<uint8_t>(biosBootType));
             auto sourceItr =
                 sourceIpmiToDbus.find(static_cast<uint8_t>(bootDeviceSelector));
             if (sourceIpmiToDbus.end() != sourceItr)
             {
-                rc = setBootSource(sourceItr->second);
+                rc = setBootSource(ctx, sourceItr->second);
                 if (rc != ipmi::ccSuccess)
                 {
-                    log<level::ERR>("ipmiChassisSetSysBootOptions: Error in "
-                                    "setting boot source");
                     return ipmi::responseUnspecifiedError();
                 }
                 // If a set boot device is mapping to a boot source, then reset
@@ -1956,16 +2026,24 @@ ipmi::RspType<> ipmiChassisSetSysBootOptions(ipmi::Context::ptr ctx,
                 // at the default value
                 if (sourceItr->second != Source::Sources::Default)
                 {
-                    setBootMode(Mode::Modes::Regular);
+                    setBootMode(ctx, Mode::Modes::Regular);
                 }
             }
-            if (modeIpmiToDbus.end() != modeItr)
+
+            if (typeIpmiToDbus.end() != typeItr)
             {
-                rc = setBootMode(modeItr->second);
+                rc = setBootType(ctx, typeItr->second);
                 if (rc != ipmi::ccSuccess)
                 {
-                    log<level::ERR>("ipmiChassisSetSysBootOptions: Error in "
-                                    "setting boot mode");
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+
+            if (modeIpmiToDbus.end() != modeItr)
+            {
+                rc = setBootMode(ctx, modeItr->second);
+                if (rc != ipmi::ccSuccess)
+                {
                     return ipmi::responseUnspecifiedError();
                 }
                 // If a set boot device is mapping to a boot mode, then reset
@@ -1974,10 +2052,11 @@ ipmi::RspType<> ipmiChassisSetSysBootOptions(ipmi::Context::ptr ctx,
                 // at the default value
                 if (modeItr->second != Mode::Modes::Regular)
                 {
-                    setBootSource(Source::Sources::Default);
+                    setBootSource(ctx, Source::Sources::Default);
                 }
             }
             if ((modeIpmiToDbus.end() == modeItr) &&
+                (typeIpmiToDbus.end() == typeItr) &&
                 (sourceIpmiToDbus.end() == sourceItr))
             {
                 // return error if boot option is not supported
@@ -1996,8 +2075,8 @@ ipmi::RspType<> ipmiChassisSetSysBootOptions(ipmi::Context::ptr ctx,
             return ipmi::responseUnspecifiedError();
         }
     }
-    else if (parameterSelector ==
-             static_cast<uint7_t>(BootOptionParameter::bootInfo))
+    else if (types::enum_cast<BootOptionParameter>(parameterSelector) ==
+             BootOptionParameter::bootInfo)
     {
         uint8_t writeMak;
         uint5_t bootInitiatorAckData;
@@ -2026,8 +2105,8 @@ ipmi::RspType<> ipmiChassisSetSysBootOptions(ipmi::Context::ptr ctx,
         if ((parameterSelector >= static_cast<uint7_t>(oemParmStart)) &&
             (parameterSelector <= static_cast<uint7_t>(oemParmEnd)))
         {
-            if (parameterSelector ==
-                static_cast<uint7_t>(BootOptionParameter::opalNetworkSettings))
+            if (types::enum_cast<BootOptionParameter>(parameterSelector) ==
+                BootOptionParameter::opalNetworkSettings)
             {
                 ipmi::Cc ret = setHostNetworkData(data);
                 if (ret != ipmi::ccSuccess)
