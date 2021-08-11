@@ -235,6 +235,8 @@ enum class SensorTypeCodes : uint8_t
     current = 0x3,
     fan = 0x4,
     other = 0xB,
+    memory = 0xC,
+    watchdog = 0x23,
 };
 
 const static boost::container::flat_map<const char*, SensorTypeCodes, CmpStr>
@@ -243,7 +245,9 @@ const static boost::container::flat_map<const char*, SensorTypeCodes, CmpStr>
                  {"current", SensorTypeCodes::current},
                  {"fan_tach", SensorTypeCodes::fan},
                  {"fan_pwm", SensorTypeCodes::fan},
-                 {"power", SensorTypeCodes::other}}};
+                 {"power", SensorTypeCodes::other},
+                 {"memory", SensorTypeCodes::memory},
+                 {"watchdog", SensorTypeCodes::watchdog}}};
 
 std::string getSensorTypeStringFromPath(const std::string& path);
 
